@@ -34,6 +34,7 @@ import {
 } from './validation.js';
 import {
   convertImageToAvif,
+  resolveOutputPath,
   analyzeImageFile,
   getOptimizedDimensions,
   createTimer
@@ -186,10 +187,7 @@ async function optimizeImages(input, options) {
         // Create error result for display
         const errorResult = {
           inputPath: file,
-          outputPath: path.join(
-            config.outputDir || path.dirname(file),
-            `${path.basename(file, path.extname(file))}.avif`
-          ),
+          outputPath: resolveOutputPath(file, config),
           error: error.message,
           errorCode: /** @type {Error & {code?: string}} */ (error).code
         };
@@ -262,6 +260,9 @@ program
   .option('-q, --quality <number>', 'AVIF quality (1-100)', validateQuality, DEFAULT_CONFIG.quality)
   .option('-e, --effort <number>', 'Compression effort (1-10)', validateEffort, DEFAULT_CONFIG.effort)
   .option('-o, --output-dir <path>', 'Output directory (default: same as input)')
+  .option('--no-resize', 'Keep original dimensions (ignore --max-width/--max-height)')
+  .option('--keep-extension', 'Name output <file>.<ext>.avif (e.g. photo.jpg.avif) instead of <file>.avif')
+  .option('--base-dir <path>', 'With --output-dir: mirror input paths relative to this directory instead of flattening')
   .option('-r, --recursive', 'Search recursively in subdirectories')
   .option('-f, --force', 'Overwrite existing .avif files without prompting')
   .option('--json', 'Output conversion results as JSON')
@@ -290,6 +291,9 @@ program
         quality: options.quality,
         effort: options.effort,
         outputDir: options.outputDir,
+        noResize: options.resize === false,
+        keepExtension: options.keepExtension || false,
+        baseDir: options.baseDir || null,
         preserveOriginal: options.preserveOriginal,
         preserveExif: options.preserveExif || DEFAULT_CONFIG.preserveExif,
         recursive: options.recursive,
@@ -324,6 +328,8 @@ Examples:
   $ avif-optimizer ./images --json > report.json
   $ avif-optimizer ./images --concurrency 8
   $ avif-optimizer ./images --generate-report
+  $ avif-optimizer wp-content/uploads -r --no-resize --keep-extension \\
+      -o wp-content/uploads-webpc/uploads --base-dir wp-content/uploads
 
 Supported formats: ${SUPPORTED_FORMATS.join(', ')}
 `);

@@ -276,6 +276,40 @@ export async function convertBufferToAvif(inputBuffer, options = {}) {
 }
 
 /**
+ * Resolve the output path for a converted file.
+ * - keepExtension: name output "<name>.<ext>.avif" (e.g. photo.jpg.avif), the sidecar
+ *   convention used by WordPress converters and Apache rewrite rules.
+ * - baseDir: when set together with outputDir, mirror the input's path relative to
+ *   baseDir below outputDir instead of flattening every file into one directory.
+ * @param {string} inputPath
+ * @param {{outputDir?: ?string, keepExtension?: boolean, baseDir?: ?string}} config
+ * @returns {string}
+ */
+export function resolveOutputPath(inputPath, config = {}) {
+  const inputDir = path.dirname(inputPath);
+  const inputExt = path.extname(inputPath);
+  const fileName = config.keepExtension
+    ? `${path.basename(inputPath)}.avif`
+    : `${path.basename(inputPath, inputExt)}.avif`;
+  let outputDir = config.outputDir || inputDir;
+  if (config.outputDir && config.baseDir) {
+    const rel = path.relative(path.resolve(config.baseDir), path.resolve(inputDir));
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+      outputDir = path.join(config.outputDir, rel);
+    }
+  }
+  return path.join(outputDir, fileName);
+}
+
+/**
+ * Like getOptimizedDimensions, but returns the original size when noResize is set.
+ */
+function targetDimensions(width, height, config) {
+  if (config.noResize) return { width, height };
+  return getOptimizedDimensions(width, height, config.maxWidth, config.maxHeight);
+}
+
+/**
  * Convert a single image file to AVIF
  * @param {string} inputPath - Path to input image
  * @param {Object} config - Configuration object
@@ -286,6 +320,9 @@ export async function convertBufferToAvif(inputBuffer, options = {}) {
  * @param {?string} config.outputDir - Output directory (null = same as input)
  * @param {boolean} config.preserveExif - Whether to preserve EXIF metadata
  * @param {boolean} config.force - Whether to overwrite existing files
+ * @param {boolean} [config.noResize] - Keep original dimensions
+ * @param {boolean} [config.keepExtension] - Output <file>.<ext>.avif
+ * @param {?string} [config.baseDir] - Mirror structure below outputDir relative to this path
  * @returns {Promise<{inputPath: string, outputPath: string, originalSize?: number, outputSize?: number, sizeSavings?: number, originalWidth?: number, originalHeight?: number, newWidth?: number, newHeight?: number, resized?: boolean, preserveExif?: boolean, wasPreprocessed?: boolean, skipped?: boolean, error?: string, errorCode?: string, processingTime?: number, metadataTime?: number, conversionTime?: number}>} Processing result
  * @throws {Error} If preprocessing or conversion fails
  * @example
@@ -304,8 +341,8 @@ export async function convertImageToAvif(inputPath, config) {
     const inputDir = path.dirname(inputPath);
     const inputExt = path.extname(inputPath).toLowerCase();
     const inputName = path.basename(inputPath, inputExt);
-    const outputDir = config.outputDir || inputDir;
-    const outputPath = path.join(outputDir, `${inputName}.avif`);
+    const outputPath = resolveOutputPath(inputPath, config);
+    const outputDir = path.dirname(outputPath);
 
     // Skip if output exists and not forcing
     try {
@@ -363,22 +400,21 @@ export async function convertImageToAvif(inputPath, config) {
     verbose(`Original dimensions: ${originalWidth}x${originalHeight}`);
 
     // Calculate optimized dimensions
-    const { width: newWidth, height: newHeight } = getOptimizedDimensions(
-      originalWidth,
-      originalHeight,
-      config.maxWidth,
-      config.maxHeight
-    );
+    const { width: newWidth, height: newHeight } = targetDimensions(originalWidth, originalHeight, config);
 
     verbose(`Optimized dimensions: ${newWidth}x${newHeight}`);
 
     // Convert to AVIF with optimization
     const conversionTimer = createTimer();
-    const sharpInstance = sharp(sharpInput)
-      .resize(newWidth, newHeight, {
-        kernel: sharp.kernel.lanczos3,
-        withoutEnlargement: true
-      });
+    // noResize: skip resizing entirely and auto-orient from EXIF, so a WordPress
+    // size variant keeps its exact pixel size and the sidecar never shows rotated.
+    const sharpInstance = config.noResize
+      ? sharp(sharpInput).rotate()
+      : sharp(sharpInput)
+        .resize(newWidth, newHeight, {
+          kernel: sharp.kernel.lanczos3,
+          withoutEnlargement: true
+        });
     
     // Conditionally preserve EXIF metadata
     if (config.preserveExif) {
@@ -424,10 +460,7 @@ export async function convertImageToAvif(inputPath, config) {
     
   } catch (error) {
     const totalProcessingTime = overallTimer.end();
-    const outputPath = path.join(
-      config.outputDir || path.dirname(inputPath),
-      `${path.basename(inputPath, path.extname(inputPath))}.avif`
-    );
+    const outputPath = resolveOutputPath(inputPath, config);
     return {
       inputPath,
       outputPath,
@@ -455,8 +488,8 @@ export async function analyzeImageFile(inputPath, config) {
     const inputDir = path.dirname(inputPath);
     const inputExt = path.extname(inputPath).toLowerCase();
     const inputName = path.basename(inputPath, inputExt);
-    const outputDir = config.outputDir || inputDir;
-    const outputPath = path.join(outputDir, `${inputName}.avif`);
+    const outputPath = resolveOutputPath(inputPath, config);
+    const outputDir = path.dirname(outputPath);
 
     // Handle HEIC preprocessing for analysis (dry run)
     const metadataTimer = createTimer();
@@ -491,12 +524,7 @@ export async function analyzeImageFile(inputPath, config) {
     const originalStats = await fs.stat(inputPath);
     const originalSize = originalStats.size;
 
-    const { width: newWidth, height: newHeight } = getOptimizedDimensions(
-      originalWidth,
-      originalHeight,
-      config.maxWidth,
-      config.maxHeight
-    );
+    const { width: newWidth, height: newHeight } = targetDimensions(originalWidth, originalHeight, config);
 
     const pixelRatio = (newWidth * newHeight) / (originalWidth * originalHeight);
     const estimatedSize = Math.round(originalSize * pixelRatio * 0.6);
@@ -526,10 +554,7 @@ export async function analyzeImageFile(inputPath, config) {
     };
   } catch (error) {
     const totalProcessingTime = overallTimer.end();
-    const outputPath = path.join(
-      config.outputDir || path.dirname(inputPath),
-      `${path.basename(inputPath, path.extname(inputPath))}.avif`
-    );
+    const outputPath = resolveOutputPath(inputPath, config);
     return {
       inputPath,
       outputPath,
