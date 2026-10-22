@@ -33,6 +33,9 @@ export const DEFAULT_CONFIG = {
   quality: 60,
   effort: 6,
   outputDir: null, // Same directory as input by default
+  noResize: false, // Keep original dimensions when true
+  keepExtension: false, // Output photo.jpg.avif instead of photo.avif
+  baseDir: null, // Mirror directory structure below outputDir relative to this path
   preserveOriginal: true,
   preserveExif: false, // Strip metadata by default for smaller files
   recursive: false,
